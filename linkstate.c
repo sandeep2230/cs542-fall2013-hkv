@@ -420,6 +420,7 @@ RoutingTable *buildRoutingTable2(int my_rid)
   int src_rid;
   int dst_rid;
   int rid;
+
   cost = (int *) malloc(sizeof(int) * ort->numOfRouters);
   memset(cost, 0, sizeof(int) * ort->numOfRouters);
   cost[my_rid] = 0;
@@ -429,22 +430,23 @@ RoutingTable *buildRoutingTable2(int my_rid)
   cost[my_rid] = 0; 
 
   setConfirmedRoute(my_rid, my_rid, my_rid, cost[my_rid]);
-  LOG ("--> Confirmed Route(%d, %d) is via %d at cost %d\n",
+  DEBUG ("--> Confirmed Route(%d, %d) is via %d at cost %d\n",
               my_rid+1, my_rid+1, my_rid+1, cost[my_rid] );
 
   src_rid = my_rid; 
 
   while (1) {
-      LOG("!! Next Source = %d\n", src_rid+1);
+      DEBUG("!! Next Source = %d\n", src_rid+1);
       for (rid = 0; rid < ort->numOfRouters; rid++) {
         if (rid == src_rid) {
-                LOG("\tSelf Route(%d, %d)\n", src_rid+1, rid+1);
+                DEBUG("\tSelf Route(%d, %d)\n", src_rid+1, rid+1);
                 continue;      
         }
 
         if (lsp[src_rid].link[rid] != NULL) {      
           rtc = getConfirmedRoute(my_rid, rid);
           rtt = getTentativeRoute(my_rid, rid);
+
           if ((!rtt) && (!rtc)) {
               /* initialise cost */
               cost[rid] = lsp[src_rid].link[rid]->linkMetric;
@@ -452,37 +454,52 @@ RoutingTable *buildRoutingTable2(int my_rid)
                   cost[rid] += cost[src_rid];
               }
               setTentativeRoute(my_rid, rid, src_rid, cost[rid]);
-              LOG ("\tNew Tentative Route(%d, %d) is via %d at cost %d\n",
+              DEBUG ("\tNew Tentative Route(%d, %d) is via %d at cost %d\n",
                   my_rid+1, rid+1, src_rid+1, cost[rid] );
           } else if (rtt) {
-              /* update cost */
-              cost[rid] += lsp[src_rid].link[rid]->linkMetric;
-              if (cost[rid] < rtt->cost) {
-                /* set this branch as least in tentative list */
-                setTentativeRoute(my_rid, rid, src_rid, cost[rid]);
-                LOG ("\tUpdate Tentative Route(%d, %d) is via %d at cost %d\n",
-                  my_rid+1, rid+1, src_rid+1, cost[rid] );
-              } else {
-                LOG ("\tCost to %d from %d via %d is %d : Ignoring this route\n",
-                   rid+1, my_rid+1, src_rid+1, cost[rid] );
-              }
+              int new_cost, old_cost;
+              Route *rtn = NULL;
 
-          }       
+              /* update cost */
+              old_cost = cost[rid];
+              rtn = getConfirmedRoute(my_rid, src_rid);
+              if (rtn) {
+                      
+                  DEBUG("newcost_to_%d (%d) = cost_to_neighbour_%d (%d) "
+                            " + hop_distance(%d)\n", 
+                                 rid, cost[rid],      
+                                src_rid,rtn->cost,
+                                lsp[src_rid].link[rid]->linkMetric); 
+
+                   new_cost = rtn->cost + lsp[src_rid].link[rid]->linkMetric;
+                   if (new_cost < old_cost) {
+                     /* set this branch as least in tentative list */
+                     setTentativeRoute(my_rid, rid, src_rid, new_cost);
+                     DEBUG ("\tUpdate Tentative Route(%d, %d) is via %d at cost %d\n",
+                             my_rid+1, rid+1, src_rid+1, cost[rid] );
+                   } else {
+                     DEBUG ("\tCost to %d from %d via %d is %d : Ignoring this route\n",
+                        rid+1, my_rid+1, src_rid+1, cost[rid] );
+                   }
+               } else {
+                    DEBUG("\tNo route to %d from %d\n", src_rid+1, my_rid+1);
+               }    
+          }   
         }
         else {
-            LOG("\tNo route to %d from %d\n", rid+1, src_rid+1);
+            DEBUG("\tNo route to %d from %d\n", rid+1, src_rid+1);
         }
       }
 
       rtt = getLeastTentative(my_rid, &rid);
       if (rtt) {  
         setConfirmedRoute(my_rid, rid, rtt->nxtHop, rtt->cost);
-        LOG ("--> Confirmed Route(%d, %d) is via %d at cost %d\n",
+        DEBUG ("--> Confirmed Route(%d, %d) is via %d at cost %d\n",
               my_rid+1, rid+1, rtt->nxtHop+1, rtt->cost );
         src_rid = rid;
         free(rtt);
       } else {
-        LOG("No more tentative routes exiting\n");
+        DEBUG("No more tentative routes exiting\n");
         break;
       }
 
@@ -522,10 +539,19 @@ void printRoutingTable(int my_rid)
 {
   int rid;
   Route *rtc;
+
+  LOG ("%-10s %-10s %-10s %-10s\n", 
+       "Source",  "Destination", "NextHop", "Cost");
+  LOG ("%10s-%10s-%10s-%10s\n",
+        "----------",
+        "----------",
+        "----------",
+        "----------",
+        "----------");
   for (rid = 0; rid < ort->numOfRouters; rid++) {
       rtc = getConfirmedRoute(my_rid, rid);
-      LOG ("Route(%d, %d) is via %d at cost %d\n",
-                  my_rid+1, rid+1, rtc->nxtHop+1, rtc->cost);
+      LOG ("%-10d %-10d %-10d %-10d\n",
+       my_rid+1, rid+1, rtc->nxtHop+1, rtc->cost);
   }
   return;
 }
