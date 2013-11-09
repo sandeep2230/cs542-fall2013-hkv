@@ -2,6 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define DEBUG(args...)  
+//#define DEBUG printf
+#define LOG   printf
+#define ERR   printf
 /* Datastructure to hold the 
  * routing cost matrix  specified in the input file 
  */
@@ -21,14 +25,6 @@ typedef struct {
   int linkMetric;
 } Link;
 
-typedef struct LinkList_ {
-  Link *link;
-  struct LinkList_ *next;
-  struct LinkList_ *previous;
-} LinkList;
-
-
-
 /* Data structure to represent the 
  * link state packet
  * contains one or more direct links of the router.
@@ -42,15 +38,13 @@ typedef struct {
   int lsSequence; /* Unused : for the same reason as above */
   int lsLength;   /* Unused : for the same reason as above */
   int numOfLinks;
-  LinkList *linkFirst;
-  LinkList *linkLast;
+  Link **link;
 } LinkStatePacket;
 
 /* Datastructure to represent the forwarding information
  * within a router. Cost represents the linkMetric.
  */
 typedef struct {
-  int dest;
   int nxtHop;
   int cost;
 } Route;
@@ -61,9 +55,7 @@ typedef struct {
  * as mentioned in the route.
  */
 typedef struct RoutingTable {
-  Route *rt;
-  struct RoutingTable *next;
-  struct RoutingTable *previous;
+  Route **rt;
 } RoutingTable;
 
 /* This data structure represents the path from src to dst
@@ -79,19 +71,18 @@ LinkStatePacket *lsp; /* Ideally link states are obtained through network advert
                          but we construct it from original routing table */ 
 RoutingTable *rtTentative; /* Transient routing table during building of confirmed routing table. */
 RoutingTable *rtConfirmed; /* Confirmed routing table. */
-RoutingTable *rt;          /* Temporary routing table. */
-RoutePath *path;
+RoutePath path;
 
 /* Function representing the high level menu */
 static int get_input()
 {
-  char ch;
-  printf ("1. Load File\n");
-  printf ("2. Build Routing Table for Each Router\n");
-  printf ("3. Out optimal path with minimum cost\n");
-  printf ("0. Exit the program\n");
-  ch = getchar();
-  return ch - '0';  
+  int ch;
+  LOG ("1. Load File\n");
+  LOG ("2. Build Routing Table for Each Router\n");
+  LOG ("3. Out optimal path with minimum cost\n");
+  LOG ("0. Exit the program\n");
+  scanf("%d", &ch);
+  return ch;  
 }
 
 /* Functio to read a line from the file
@@ -199,7 +190,7 @@ OrigRoutingTable *allocateOrigRoutingTable(int numOfSpace)
       }
       free(ort->cost); 
     }
-    printf("Error in alloc routers for ort numOfRouters=%d",ort->numOfRouters);
+    ERR("Error in alloc routers for ort numOfRouters=%d",ort->numOfRouters);
     free(ort);
     return NULL;
   }
@@ -211,25 +202,23 @@ int parseLine(char *line, int lineLength, int numOfRouters, int *cost)
    char *tempLine;
    char *tok = NULL;
    char delim[10]=" ";
-   int i;
+   int i=0;
 
    tempLine = (char *) malloc(lineLength+1);
 
    memset(tempLine, 0, lineLength+1);
 
-   strncpy(tempLine, line, lineLength);
-
+   strcpy(tempLine, line);
    tok = strtok(tempLine, delim);
-   if (tok) {
-     for (i = 0; i < numOfRouters; i++) {
-        cost[i] = atoi(tok);
-        tok = strtok(NULL, delim);
-        if (!tok) break;
-     }
+   while (tok) {
+     cost[i] = atoi(tok);
+     tok = strtok(NULL, delim);
+     i++;
    }
    
    return 0;
 }
+
 /* Function to read the lines in the input file one by one
  * and construct the original routing table */
 static OrigRoutingTable *loadOrigRoutingTable(char *file)
@@ -241,12 +230,13 @@ static OrigRoutingTable *loadOrigRoutingTable(char *file)
   int numOfRouters = 0;
   int numOfSpaces;
   OrigRoutingTable *ort = NULL;
-  int i;
+  int i, j;
 
   /* Open file */
+  LOG("Open File %s\n", file);
   fd = fopen(file, "r");
   if (!fd) {
-    printf("Error in opening file: %s\n", file);
+    ERR("Error in opening file: %s\n", file);
     return NULL;
   }
 
@@ -254,57 +244,56 @@ static OrigRoutingTable *loadOrigRoutingTable(char *file)
   /* Parse the fist line to know the size of the cost matrix. */
   line = readLine(fd, &lineLength, &numOfSpaces);
   if (!line) {
-    printf("Error in reading line from %s\n", file);
+    ERR("Error in reading line from %s\n", file);
     fclose(fd);
     return NULL;
   }
-  printf("Num Of Spaces: %d\n", numOfSpaces); 
+  DEBUG("Num Of Spaces: %d\n", numOfSpaces); 
 
   /* Allocate Original Routing table */
   ort = allocateOrigRoutingTable(numOfSpaces);
   if (!ort) {
-    printf("Error in allocating ORT");
+    ERR("Error in allocating ORT");
     fclose(fd);
     return NULL;
   }
 
+  LOG("Original Routing Table is as follows\n");
+  /* Top Line */ 
+  LOG("     |");
+  for(j = 0; j < ort->numOfRouters; j++) 
+       LOG("%2d  ", ort->cost[0][j]);
+  LOG("\n");
+
+  /* Divider Line */
+  LOG("-----|");
+  for(j = 0; j < ort->numOfRouters; j++) 
+       LOG("----");
+  LOG("\n");
+
   parseLine(line, lineLength, ort->numOfRouters, ort->cost[0]);
-  printf("Line %d: %s\n", 0, line); 
+
+  LOG("%2d.  |", 0);
+  for(j = 0; j < ort->numOfRouters; j++)
+          LOG("%2d  ", ort->cost[0][j]);
+  LOG("\n");
   for (i=1; i < ort->numOfRouters; i++) {
       line = readLine(fd, &lineLength, &numOfSpaces);
       if (!line) {
-        printf("Error in reading line from %s\n", file);
+        DEBUG("Error in reading line from %s\n", file);
         fclose(fd);
         return NULL;
       }
-      printf("Line %d: %s\n", i, line); 
+
       parseLine(line, lineLength, ort->numOfRouters, ort->cost[i]);
+
+      LOG("%2d.  |", i);
+      for(j = 0; j < ort->numOfRouters; j++)
+          LOG("%2d  ", ort->cost[i][j]);
+      LOG("\n");
   }
 
   return ort;
-}
-
-/* Function to add a link to LinkStatePacket */
-static int addLinkToLSP(LinkStatePacket *lsp, Link *link)
-{
-  LinkList *links;
-  links = (LinkList *) malloc(sizeof(LinkList));
-  if (!links) {
-    return -1;
-  }
-
-  links->link = link;
-  links->next = NULL;
-  links->previous = NULL;
-  if (lsp->linkFirst == NULL) {
-      lsp->linkFirst = lsp->linkLast = links;
-  } else {
-      lsp->linkLast->next = links;
-      links->previous = lsp->linkLast;
-      lsp->linkLast = links;
-  }
-
-  lsp->numOfLinks++;
 }
 
 /* Function to construct a link state packet */
@@ -315,86 +304,327 @@ static int constructLSP(OrigRoutingTable *ort, LinkStatePacket **lsp_)
   LinkStatePacket *lsp;
 
   if ((ort == NULL) || (lsp == NULL)) {
-     printf("Wrong arguments ..\n");
+     ERR("Wrong arguments ..\n");
      return -1;
   }
 
   lsp = (LinkStatePacket *) 
             malloc(sizeof(LinkStatePacket) * ort->numOfRouters);
   if (!lsp) {
-     printf("Malloc failed..\n");
+     DEBUG("Malloc failed..\n");
      return -1;
   }
+
+  memset(lsp, 0, sizeof(LinkStatePacket)* ort->numOfRouters);
   for (i = 0; i < ort->numOfRouters; i++) {
-      memset(&lsp[i], 0, sizeof(LinkStatePacket));
       lsp[i].lsId = i;
       lsp[i].numOfLinks = 0;
+      lsp[i].link = (Link **) malloc(sizeof(Link *) * ort->numOfRouters);
+      if (!lsp[i].link) {
+            ERR("malloc error %s:%d ..\n", 
+                               __FUNCTION__, __LINE__);
+      }
       for (j = 0; j < ort->numOfRouters; j++) {
-        if (ort->cost[i][j] != 0) {
-         if (ort->cost[i][j] != -1) {
-           Link *link;
-           link = (Link *) malloc(sizeof(Link));
-           link->linkid = i*ort->numOfRouters + j;
-           link->linkType = 1; /* always same */
-           link->linkMetric = ort->cost[i][j];
-           addLinkToLSP(&lsp[i], link);
+         if (ort->cost[i][j] != -1) { /* ignore non neighbours */
+           lsp[i].link[j] = (Link *) malloc(sizeof(Link));
+           lsp[i].link[j]->linkid = i*ort->numOfRouters + j;
+           lsp[i].link[j]->linkType = 1; /* always same */
+           DEBUG("LSP %d %d %d\n", i, j,ort->cost[i][j]); 
+           lsp[i].link[j]->linkMetric = ort->cost[i][j];
+           lsp[i].numOfLinks++;
          }
-        }
       }
   }
   *lsp_ = lsp;
-  printf("Link added successfully\n");
+  DEBUG("Link added successfully\n");
   return 0;
 }
 
-
 static int printLSP(LinkStatePacket *lsp, int numOfRouters)
 {
-  LinkList *linkList;
   Link *link;
   int i, j; 
   for (i = 0; i < numOfRouters; i++) {
-    printf("LSP %d\n", i);
-    printf("\tlspId = %d\n", lsp[i].lsId);
-    printf("\tnumOfLinks = %d\n", lsp[i].numOfLinks);
-    linkList = lsp[i].linkFirst;
-    for (j = 0; j < lsp[i].numOfLinks; j++) {
-      if ( !linkList ) break;
-      link = linkList->link;
-      if (!link) {
-        linkList = linkList->next;
-        continue;
+    DEBUG("LSP %d\n", i);
+    DEBUG("\tlspId = %d\n", lsp[i].lsId);
+    DEBUG("\tnumOfLinks = %d\n", lsp[i].numOfLinks);
+    for (j = 0; j < numOfRouters; j++) {
+      if (lsp[i].link[j]) {
+        DEBUG("\tLink:%d\n", j);
+        DEBUG("\t\tlinkid=%d\n", lsp[i].link[j]->linkid);
+        DEBUG("\t\tlinkType=%d\n", lsp[i].link[j]->linkType); /* always same */
+        DEBUG("\t\tlinkMetric=%d\n", lsp[i].link[j]->linkMetric);
       }
-      printf("\tLink:%d\n", j);
-      printf("\t\tlinkid=%d\n", link->linkid);
-      printf("\t\tlinkType=%d\n", link->linkType); /* always same */
-      printf("\t\tlinkMetric=%d\n", link->linkMetric);
-      linkList = linkList->next;
     }
   }
 }
 
+void setConfirmedRoute(int src, int dst, int nxt, int cost)
+{
+  Route *rt;
+  if (!rtConfirmed[src].rt[dst]) {
+      rtConfirmed[src].rt[dst] = (Route *) malloc(sizeof(Route));
+  }
+  rt = rtConfirmed[src].rt[dst];
+  if (rt) {
+      rt->nxtHop = nxt;
+      rt->cost = cost;
+  }
+  return;
+}
+
+void setTentativeRoute(int src, int dst, int nxt, int cost)
+{
+  Route *rt;
+
+  if (!rtTentative[src].rt[dst]) {
+      rtTentative[src].rt[dst] = (Route *) malloc(sizeof(Route));
+  }
+  rt = rtTentative[src].rt[dst];
+  if (rt) {
+      rt->nxtHop = nxt;
+      rt->cost = cost;
+  }
+  return;
+}
+
+Route *getConfirmedRoute(int src, int dst)
+{
+  return rtConfirmed[src].rt[dst];
+}
+
+Route *getTentativeRoute(int src, int dst)
+{
+  return rtTentative[src].rt[dst];
+}
+
+Route *getLeastTentative(int src, int *nxtRtr)
+{
+  int rid;        
+  unsigned int leastCost=0xFFFFFFFF;
+  Route *leastCostRt = NULL; 
+
+  DEBUG("Get Least Cost Route ..\n");
+  for (rid = 0; rid < ort->numOfRouters; rid++) {
+     if ((rtTentative[src].rt[rid]) &&
+         ((unsigned )rtTentative[src].rt[rid]->cost < (unsigned)leastCost))
+     {
+         leastCost = rtTentative[src].rt[rid]->cost;
+         *nxtRtr = rid;
+         leastCostRt = rtTentative[src].rt[rid];
+
+         DEBUG("leastCost=%d; nxtHop=%d\n",
+                         leastCost, *nxtRtr);
+     }
+  }
+
+  if (leastCostRt) {
+    rtTentative[src].rt[*nxtRtr] = NULL;
+  }
+  return leastCostRt;
+}
 /* Function to buils routing table using available
  * LinkStatePackets.
  * This function uses Dijkstra's algorithm. 
  */
-RoutingTable *buildRoutingTable(int routerId)
+RoutingTable *buildRoutingTable2(int my_rid)
+{
+  Route *rtc;
+  Route *rtt;
+  unsigned int *cost;
+  int src_rid;
+  int dst_rid;
+  int rid;
+
+  cost = (int *) malloc(sizeof(int) * ort->numOfRouters);
+  memset(cost, 0, sizeof(int) * ort->numOfRouters);
+  cost[my_rid] = 0;
+  for (rid = 0; rid < ort->numOfRouters; rid++) {
+     if (my_rid != rid) cost[rid] = 0xffffffff;
+  }
+  cost[my_rid] = 0; 
+
+  setConfirmedRoute(my_rid, my_rid, my_rid, cost[my_rid]);
+  DEBUG ("--> Confirmed Route(%d, %d) is via %d at cost %d\n",
+              my_rid+1, my_rid+1, my_rid+1, cost[my_rid] );
+  /* Start with my router */
+  src_rid = my_rid; 
+
+  while (1) {
+      DEBUG("!! Next Source = %d\n", src_rid+1);
+      for (rid = 0; rid < ort->numOfRouters; rid++) {
+        if (rid == src_rid) {
+                DEBUG("\tSelf Route(%d, %d)\n", src_rid+1, rid+1);
+                continue;      
+        }
+
+        if (lsp[src_rid].link[rid] != NULL) { 
+          /* We have  a link to router */     
+          rtc = getConfirmedRoute(my_rid, rid);
+          rtt = getTentativeRoute(my_rid, rid);
+
+          if ((!rtt) && (!rtc)) {
+              /* initialise cost */
+              cost[rid] = lsp[src_rid].link[rid]->linkMetric;
+              if (src_rid != my_rid) {
+                  cost[rid] += cost[src_rid];
+              }
+              setTentativeRoute(my_rid, /* src */
+                                rid, /* dst */
+                                src_rid, /* hop */
+                                cost[rid] /* cost to dst */);
+              DEBUG ("\tNew Tentative Route(%d, %d) is via %d at cost %d\n",
+                  my_rid+1, rid+1, src_rid+1, cost[rid] );
+          } else if (rtt) {
+              int new_cost, old_cost;
+              Route *rtn = NULL;
+
+              /* update cost */
+              old_cost = cost[rid];
+              rtn = getConfirmedRoute(my_rid, src_rid);
+              if (rtn && (lsp[src_rid].link[rid]->linkMetric > -1)) {
+                      
+                  DEBUG("newcost_to_%d (%d) = cost_to_neighbour_%d (%d) "
+                            " + hop_distance(%d)\n", 
+                                 rid, cost[rid],      
+                                src_rid,rtn->cost,
+                                lsp[src_rid].link[rid]->linkMetric); 
+
+                   new_cost = rtn->cost + lsp[src_rid].link[rid]->linkMetric;
+                   if (new_cost < old_cost) {
+                     /* set this branch as least in tentative list */
+                     setTentativeRoute(my_rid, /* src */
+                                       rid, /* dst */
+                                       src_rid, /* hop */
+                                       new_cost /* cost */);
+                     DEBUG ("\tUpdate Tentative Route(%d, %d) is via %d at cost %d\n",
+                             my_rid+1, rid+1, src_rid+1, cost[rid] );
+                   } else {
+                     DEBUG ("\tCost to %d from %d via %d is %d : Ignoring this route\n",
+                        rid+1, my_rid+1, src_rid+1, cost[rid] );
+                   }
+               } else {
+                    DEBUG("\tNo route to %d from %d\n", src_rid+1, my_rid+1);
+               }    
+          }   
+        }
+        else {
+            DEBUG("\tNo route to %d from %d\n", rid+1, src_rid+1);
+        }
+      }
+
+      rtt = getLeastTentative(my_rid, &rid);
+      if (rtt) {  
+        setConfirmedRoute(my_rid, rid, rtt->nxtHop, rtt->cost);
+        DEBUG ("--> Confirmed Route(%d, %d) is via %d at cost %d\n",
+              my_rid+1, rid+1, rtt->nxtHop+1, rtt->cost );
+        src_rid = rid;
+        free(rtt);
+      } else {
+        DEBUG("No more tentative routes exiting\n");
+        break;
+      }
+
+  }
+
+  return NULL;
+}
+
+
+
+
+RoutingTable *buildRoutingTable(int my_rid)
 {
   return NULL;
 }
 
-void printRoutingTable(RoutingTable *rt)
+void allocRoutingTables(int numOfRouters)
 {
+    int i;
+    rtConfirmed = (RoutingTable *) malloc(sizeof(RoutingTable)*numOfRouters);
+    memset(rtConfirmed, 0, sizeof(RoutingTable)*numOfRouters);
+    for (i = 0; i < numOfRouters; i++) {
+        rtConfirmed[i].rt = (Route **) malloc(sizeof(Route*)*numOfRouters);
+        memset(rtConfirmed[i].rt, 0, sizeof(Route*)*numOfRouters);
+    }
+
+    rtTentative = (RoutingTable *) malloc(sizeof(RoutingTable)*numOfRouters);
+    memset(rtTentative, 0, sizeof(RoutingTable)*numOfRouters);
+    for (i = 0; i < numOfRouters; i++) {
+        rtTentative[i].rt = (Route **) malloc(sizeof(Route*)*numOfRouters);
+        memset(rtTentative[i].rt, 0, sizeof(Route*)*numOfRouters);
+    }
+}
+
+
+void printRoutingTable(int my_rid)
+{
+  int rid;
+  Route *rtc;
+
+  LOG ("%-10s %-10s %-10s %-10s\n", 
+       "Source",  "Destination", "NextHop", "Cost");
+  LOG ("%10s-%10s-%10s-%10s\n",
+        "----------",
+        "----------",
+        "----------",
+        "----------",
+        "----------");
+  for (rid = 0; rid < ort->numOfRouters; rid++) {
+      rtc = getConfirmedRoute(my_rid, rid);
+      LOG ("%-10d %-10d %-10d %-10d\n",
+       my_rid+1, rid+1, rtc->nxtHop+1, rtc->cost);
+  }
   return;
 }
 
-RoutePath *computePath(int srcRouterId, int dstRouteerId)
+void computePath(int srcRouterId, int dstRouterId, RoutePath *rp)
 {
-  return NULL;
+  int currentRouter;      
+  Route *rt;
+  rp->numOfHops = 0;
+  rp->rt = NULL;
+  /* we start from index 1 */
+  srcRouterId--;
+  dstRouterId--;
+  currentRouter=srcRouterId;  
+  DEBUG("rp->numOfHops=%d current router=%d\n", rp->numOfHops, currentRouter+1);
+  while (currentRouter != dstRouterId) {
+    DEBUG("current router=%d\n", currentRouter+1);
+    rt = realloc(rp->rt, (rp->numOfHops+1) *sizeof(Route));
+    if (!rt) break;
+    rp->rt = rt;
+    rt = getConfirmedRoute(currentRouter, dstRouterId);
+    if (rt) {  
+         DEBUG("confirmed nextHop=%d from router %d at cost=%d\n", rt->nxtHop+1, currentRouter+1, rt->cost);
+         memcpy(&rp->rt[rp->numOfHops], rt, sizeof(Route));
+    }
+    else {
+         break;
+    }
+    if (currentRouter == rt->nxtHop) { DEBUG("NxtHop==currentRouter, breaking \n"); break; }
+    currentRouter = rt->nxtHop;
+    rp->numOfHops++;
+    DEBUG("numOfHops=%d\n", rp->numOfHops);
+  }
+  return;
 }
 
 void printRoutePath(RoutePath *path)
 {
+  int i;
+
+  if (path->numOfHops == 0) {
+       LOG("-");
+  } else if (path->numOfHops != 0xFF){
+      if ((path->numOfHops == 1) && (path->rt[0].cost == 0)) {
+              LOG("-");
+      }
+      else
+      for (i = 0; i < path->numOfHops; i++) {
+         LOG("-%d-",  path->rt[i].nxtHop+1);
+      }
+  }
   return;
 }
 
@@ -404,62 +634,57 @@ int main(int argc, char **argv)
   int ret;
   while (ch != 0) {
     ch = get_input();
-    printf("Your choice = %d\n", ch);
+    LOG("Your choice = %d\n", ch);
     switch (ch) {
       case 1:
       {
         char dataFile[25] = { 0 };
-        printf("Please load original routing table data file\n");
+        LOG("Please load original routing table data file\n");
         scanf("%s", dataFile); 
         ort = loadOrigRoutingTable(dataFile);
         if (!ort){ 
-          printf("%s:%d error in constructing original routing table\n",
+          DEBUG("%s:%d error in constructing original routing table\n",
              __FUNCTION__, __LINE__);
           return -1;
         }
-        printf("%s:%d ort=%p &lsp=%p\n",
+        DEBUG("%s:%d ort=%p &lsp=%p\n",
              __FUNCTION__, __LINE__, ort, &lsp);
 
         ret = constructLSP(ort, &lsp);
         if (ret != 0) {
-          printf("Link State Packets construction failure\n");
+          DEBUG("Link State Packets construction failure\n");
         } else {
-          printf("Link State Packets construction success\n");
+          LOG("Link State Packets construction success\n");
           printLSP(lsp, ort->numOfRouters);
         }
-
+        
+        allocRoutingTables(ort->numOfRouters);
       }
       break;
       case 2:
       {
         int routerId;
-        printf("Please select a router\n");
+        LOG("Please select a router\n");
         scanf("%d", &routerId); 
-        rt = buildRoutingTable(routerId);
-        if (!rt){ 
-          printf("%s:%d error in constructing routing table for routerID=%d\n",
-             __FUNCTION__, __LINE__, routerId);
-          return -1;
-        }
-        printf("The routing table for router %d is\n", routerId);
-        printRoutingTable(rt);  
+        routerId--;
+        buildRoutingTable2(routerId);
+        LOG("The routing table for router %d is\n", routerId);
+        printRoutingTable(routerId);  
       }
       break;
       case 3:
       {
         int srcRouterId;
         int dstRouterId;
-        printf("Please input the source and the destination router\n");
+        LOG("Please input the source and the destination router\n");
         scanf("%d", &srcRouterId); 
         scanf("%d", &dstRouterId); 
-        path = computePath(srcRouterId, dstRouterId);
-        if (!path){ 
-          printf("%s:%d error in constructing path between %d and %d\n",
-             __FUNCTION__, __LINE__, srcRouterId, dstRouterId);
-          return -1;
-        }
-        printf("The path from %d to %d\n", srcRouterId, dstRouterId);
-        printRoutePath(path);  
+        computePath(srcRouterId, dstRouterId, &path);
+        LOG("The shrtest path from %d to %d is %d", srcRouterId, dstRouterId, srcRouterId);
+        printRoutePath(&path);  
+        LOG("%d\n", dstRouterId);
+        LOG ("Num of Hops = %d\n",path.numOfHops); 
+        free(path.rt);
         break;
       }
 
